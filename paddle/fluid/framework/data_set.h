@@ -296,6 +296,9 @@ class DatasetImpl : public Dataset {
   std::vector<std::shared_ptr<paddle::framework::ThreadPool>>
       consume_task_pool_;
   std::vector<T> input_records_;  // only for paddleboxdatafeed
+  // --------------------------join update exp-------------------------------
+  std::vector<T> input_records_exp_;  // only for paddleboxdatafeed
+  // ------------------------------------------------------------------------
 };
 
 // use std::vector<MultiSlotType> or Record as data type
@@ -409,6 +412,9 @@ class PadBoxSlotDataset : public DatasetImpl<SlotRecord> {
   int mpi_size_ = 1;
   int mpi_rank_ = 0;
   std::vector<SlotPvInstance> input_pv_ins_;
+  // --------------------------join update exp-------------------------------
+  std::vector<SlotPvInstance> input_pv_ins_exp_;  // only for paddleboxdatafeed
+  // ------------------------------------------------------------------------
   int shuffle_thread_num_ = FLAGS_padbox_dataset_shuffle_thread_num;
   std::atomic<int> shuffle_counter_{0};
   void* data_consumer_ = nullptr;

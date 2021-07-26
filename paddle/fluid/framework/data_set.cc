@@ -2131,6 +2131,73 @@ void PadBoxSlotDataset::DynamicAdjustReadersNum(int thread_num) {
   PrepareTrain();
 }
 
+void PadBoxSlotDataset::cid_group_random_time_sort() {
+  if (input_records_.empty()) {
+    return;
+  }
+
+  input_records_exp_.clear()  // exp ins struct for swap
+  input_pv_ins_exp_.clear();  // exp sid ins struct
+
+  // generate bucket based on searchid
+  size_t all_records_num = input_records_.size();
+  std::sort(input_records_.data(), input_records_.data() + all_records_num,
+            [](const SlotRecord& lhs, const SlotRecord& rhs) {
+              return lhs->cookie_id < rhs->cookie_id;
+            });
+
+  uint64_t last_cookie_id = 0;
+  for (size_t i = 0; i < all_records_num; ++i) {
+    auto& ins = input_records_[i];
+    if (i == 0 || last_cookie_id != ins->cookie_id) {
+      SlotPvInstance pv_instance_exp = make_slotpv_instance();
+      pv_instance_exp->merge_instance(ins);
+      input_pv_ins_exp_.push_back(pv_instance_exp);
+      last_cookie_id = ins->cookie_id;
+      continue;
+    }
+    input_pv_ins_exp_.back()->merge_instance(ins);
+  }
+
+  // sort ins of bucket by time
+  std::vector<int> group_id_list;
+  size_t all_group_num = input_pv_ins_exp_.size();
+  if (all_group_num <= 0) {
+    LOG(WARNING) << "error input_pv_ins_exp_ size" << all_group_num;
+    return;
+  }
+  for (size_t i = 0; i < all_group_num; ++i) {
+    // sort by log time
+    std::sort(input_pv_ins_exp_.ads.begin(), input_pv_ins_exp_.ads.end(),
+            [](const SlotRecord& lhs, const SlotRecord& rhs) {
+              return lhs->ins_id_ > rhs->ins_id_;
+            });
+    // generate tmp index for random select
+    group_id_list.push_back(i);
+  }
+
+  // generate new shuffle ins struct
+  size_t ins_id = 0;
+  while (ins_id < all_records_num) {
+    std::shuffle(group_id_list.begin(), group_id_list.begin() + group_id_list.size(), BoxWrapper::LocalRandomEngine());
+    size_t default_id = group_id_list[group_id_list.size()-1];
+    while (input_pv_ins_exp_[default_id].ads.size() == 0) {
+      group_id_list.pop_back();
+      std::shuffle(group_id_list.begin(), group_id_list.begin() + group_id_list.size(), BoxWrapper::LocalRandomEngine());
+    }
+    default_id = group_id_list[group_id_list.size()-1];
+    input_records_exp_.push_back(input_pv_ins_exp_[default_id].ads.back());
+    input_pv_ins_exp_[default_id].ads.pop_back();
+    ins_id++;
+  }
+  input_records_ = input_records_exp_;
+
+  // memory recycle
+  input_records_exp_.clear();
+  std::vector<T>().swap(input_records_);
+  std::vector<T>().swap(input_pv_ins_exp_);
+}
+
 // prepare train do something
 void PadBoxSlotDataset::PrepareTrain(void) {
   auto box_ptr = paddle::framework::BoxWrapper::GetInstance();
@@ -2153,8 +2220,8 @@ void PadBoxSlotDataset::PrepareTrain(void) {
           ->AddBatchOffset(offset[i]);
     }
   } else {
-    std::shuffle(input_records_.begin(), input_records_.end(),
-                 BoxWrapper::LocalRandomEngine());
+    // --------------------------join update exp-------------------------------
+    cid_group_random_time_sort();
     // 分数据到各线程里面
     int batchsize = reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[0].get())
                         ->GetBatchSize();
@@ -2168,6 +2235,7 @@ void PadBoxSlotDataset::PrepareTrain(void) {
       reinterpret_cast<SlotPaddleBoxDataFeed*>(readers_[i % thread_num_].get())
           ->AddBatchOffset(offset[i]);
     }
+    // ------------------------------------------------------------------------
   }
 }
 
